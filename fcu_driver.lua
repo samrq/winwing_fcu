@@ -6,11 +6,37 @@ function init_fcu()
         if ((device.vendor_id == 0x4098) and (device.product_id == 0xbb10) )
         then
             logMsg("found fcu device "..device.product_string)
+            init_switches()
             assign_button()
             lcd_init()
             break
         end
     end
+
+end
+
+--init switches. apply current switch positions from winwing fcu to xp
+function init_switches()
+
+    local fcu = hid_open(0x4098, 0xbb10)
+    local data_in = {hid_read(fcu,42)}
+    hid_close(fcu)
+    
+    local n = data_in[1] -- index start from 1.....
+    if (n ~= 41)
+    then
+        --logMsg("invalid input data len skip "..n)
+        return
+    end
+
+    -- data_in[6]: alt 100/1000 switch
+    if(data_in[6] == 0x02) then
+        command_once("laminar/A333/autopilot/alt_step_left")
+    elseif(data_in[6] == 0x04) then
+        command_once("laminar/A333/autopilot/alt_step_right")
+    end
+
+    
 
 end
 
@@ -24,7 +50,7 @@ end
 
 --TODO: still working on it to load this button id begin from config automatic  button IDs might change across different machines
 --you can find the button id in X-Plane 12/Output/preferences/control profiles/{your device profile}.prf
-FCU_BUTTON_BEGIN = 800
+FCU_BUTTON_BEGIN = 1120--800
 local btn = {}
 btn["MACH"] = {id=0,dataref="sim/autopilot/knots_mach_toggle"}
 btn["LOC"] = {id=1,dataref="sim/autopilot/NAV"}
