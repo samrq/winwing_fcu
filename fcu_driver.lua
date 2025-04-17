@@ -38,12 +38,20 @@ function init_winwing_device()
 
 end
 
---init switches. apply current switch positions from winwing fcu to xp
+--init switches. apply current switch positions from winwing fcu/efisr to xp
 function init_switches()
 
-    local fcu = hid_open(0x4098, winwing_device.product_id)
-    local data_in = {hid_read(fcu,42)}
-    hid_close(fcu)
+    init_fcu_switches()
+
+    init_efisr_switches()
+
+end
+
+function init_fcu_switches()
+
+    local winwing_hid_dev = hid_open(0x4098, winwing_device.product_id)
+    local data_in = {hid_read(winwing_hid_dev,42)}
+    hid_close(winwing_hid_dev)
     
     local n = data_in[1] -- index start from 1.....
     if (n ~= 41)
@@ -52,14 +60,91 @@ function init_switches()
         return
     end
 
-    -- data_in[6]: alt 100/1000 switch
-    if(data_in[6] == 0x02) then
+    --alt 100/1000 switch
+    -- data_in[6]: value 0x02 = 100ft, 0x04 = 1000ft
+    local is100_active = isBitSet(data_in[6],0x02)
+    local is1000_active = isBitSet(data_in[6],0x04)
+    if(is100_active and not is1000_active) then
         command_once("laminar/A333/autopilot/alt_step_left")
-    elseif(data_in[6] == 0x04) then
+    elseif(not is100_active and is1000_active) then
         command_once("laminar/A333/autopilot/alt_step_right")
+    else
+        logMsg("Can't read Winwing FCU altitude 100/1000ft switch position");
     end
 
+end
+
+function init_efisr_switches()
+
+    local winwing_hid_dev = hid_open(0x4098, winwing_device.product_id)
+    local data_in = {hid_read(winwing_hid_dev,42)}
+    hid_close(winwing_hid_dev)
+
+    local n = data_in[1] -- index start from 1.....
+    if (n ~= 41)
+    then
+        --logMsg("invalid input data len skip "..n)
+        return
+    end
     
+    --inHg/hPa switch
+    --data_in[12], value 0x08 = inhg, 0x10 = hpa
+    local inhg_active = isBitSet(data_in[12],0x08)
+    local hpa_active = isBitSet(data_in[12],0x10)
+    if(inhg_active and not hpa_active) then
+        command_once("laminar/A333/knob/baro/fo_inHg")
+    elseif(not inhg_active and hpa_active) then
+        command_once("laminar/A333/knob/baro/fo_hPa")
+    else
+        LogMsg("Can't read Winwing EFIS R inHg/hPa switch position");
+    end
+
+    --ADF/OFF/VOR 1 switch
+    --data_in[14], value 0x01 = vor1, 0x02 = off1, 0x04 = adf1
+    local vor1_active = isBitSet(data_in[14],0x01)
+    local off1_active = isBitSet(data_in[14],0x02)
+    local adf1_active = isBitSet(data_in[14],0x04)
+    if(vor1_active and not off1_active and not adf1_active) then
+        --VOR 1
+        command_once("sim/instruments/EFIS_1_copilot_sel_vor")
+    elseif(not vor1_active and off1_active and not adf1_active) then
+        --OFF 1
+        command_once("sim/instruments/EFIS_1_copilot_sel_off")
+    elseif(not vor1_active and not off1_active and adf1_active) then
+        --ADF 1
+        command_once("sim/instruments/EFIS_1_copilot_sel_adf")
+    else
+        LogMsg("Can't read Winwing EFIS R ADF/OFF/VOR 1 switch position");
+    end
+
+    --ADF/OFF/VOR 2 switch
+    --data_in[14], 0x08 = vor2, 0x10 = off2, 0x20 = adf2
+    local vor2_active = isBitSet(data_in[14],0x08)
+    local off2_active = isBitSet(data_in[14],0x10)
+    local adf2_active = isBitSet(data_in[14],0x20)
+    if(vor2_active and not off2_active and not adf2_active) then
+        --VOR 2
+        command_once("sim/instruments/EFIS_2_copilot_sel_vor")
+    elseif(not vor2_active and off2_active and not adf2_active) then
+        --OFF 2
+        command_once("sim/instruments/EFIS_2_copilot_sel_off")
+    elseif(not vor2_active and not off2_active and adf2_active) then
+        --ADF 2
+        command_once("sim/instruments/EFIS_2_copilot_sel_adf")
+    else
+        LogMsg("Can't read Winwing EFIS R ADF/OFF/VOR 2 switch position");
+    end
+
+end
+
+
+--determines whether in a given byte a certain bit is set.
+--both the byte and the "bit" have to be specified as byte,
+--i.e. the third bit (from right to left) means bitValue = 0x08,
+--the first bit means bitValue = 0x01, etc.
+function isBitSet(byteValue, bitValue)
+
+    return (bit.band(byteValue,bitValue) > 0)
 
 end
 
