@@ -41,7 +41,7 @@ end
 --init switches. apply current switch positions from winwing fcu to xp
 function init_switches()
 
-    local fcu = hid_open(0x4098, 0xbb10)
+    local fcu = hid_open(0x4098, winwing_device.product_id)
     local data_in = {hid_read(fcu,42)}
     hid_close(fcu)
     
