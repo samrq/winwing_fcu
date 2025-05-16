@@ -1,30 +1,164 @@
 local bit = require("bit")
 local socket = require("socket")
-function init_fcu()
+winwing_device = nil;
+function init_winwing_device()
+
+    --detect winwing fcu, efis l and/or efis r  
     for i = 1,NUMBER_OF_HID_DEVICES do
         local device = ALL_HID_DEVICES[i]
         if ((device.vendor_id == 0x4098) and (device.product_id == 0xbb10) )
         then
-            logMsg("found fcu device "..device.product_string)
+            winwing_device = {product_id = device.product_id, mask = "FCU"}
+        elseif ((device.vendor_id == 0x4098) and (device.product_id == 0xbc1e) ) then
+            winwing_device = {product_id = device.product_id, mask = "FCU | EFISR"}
+        elseif ((device.vendor_id == 0x4098) and (device.product_id == 0xbc1d) ) then
+            winwing_device = {product_id = device.product_id, mask = "FCU | EFISL"}
+        elseif ((device.vendor_id == 0x4098) and (device.product_id == 0xba01) ) then
+            winwing_device = {product_id = device.product_id, mask = "FCU | EFISL | EFISR"}
+        end 
+
+        if (winwing_device ~= nil) then
+            logMsg("found winwing device: "..winwing_device.mask)
+            init_switches()
             assign_button()
             lcd_init()
             break
         end
+
+    end
+
+    --stop executing the script if no winwing fcu/efis is found or
+    --start refresh function
+    if (winwing_device == nil) then
+        logMsg("No winwing device found")
+        return
+    else
+        do_every_frame("refresh_dataref()")
+    end
+
+end
+
+--init switches. apply current switch positions from winwing fcu/efisr to xp
+function init_switches()
+
+    init_fcu_switches()
+
+    init_efisr_switches()
+
+end
+
+function init_fcu_switches()
+
+    local winwing_hid_dev = hid_open(0x4098, winwing_device.product_id)
+    local data_in = {hid_read(winwing_hid_dev,42)}
+    hid_close(winwing_hid_dev)
+    
+    local n = data_in[1] -- index start from 1.....
+    if (n ~= 41)
+    then
+        --logMsg("invalid input data len skip "..n)
+        return
+    end
+
+    --alt 100/1000 switch
+    -- data_in[6]: value 0x02 = 100ft, 0x04 = 1000ft
+    local is100_active = isBitSet(data_in[6],0x02)
+    local is1000_active = isBitSet(data_in[6],0x04)
+    if(is100_active and not is1000_active) then
+        command_once("laminar/A333/autopilot/alt_step_left")
+    elseif(not is100_active and is1000_active) then
+        command_once("laminar/A333/autopilot/alt_step_right")
+    else
+        logMsg("Can't read Winwing FCU altitude 100/1000ft switch position");
+    end
+
+end
+
+function init_efisr_switches()
+
+    local winwing_hid_dev = hid_open(0x4098, winwing_device.product_id)
+    local data_in = {hid_read(winwing_hid_dev,42)}
+    hid_close(winwing_hid_dev)
+
+    local n = data_in[1] -- index start from 1.....
+    if (n ~= 41)
+    then
+        --logMsg("invalid input data len skip "..n)
+        return
+    end
+    
+    --inHg/hPa switch
+    --data_in[12], value 0x08 = inhg, 0x10 = hpa
+    local inhg_active = isBitSet(data_in[12],0x08)
+    local hpa_active = isBitSet(data_in[12],0x10)
+    if(inhg_active and not hpa_active) then
+        command_once("laminar/A333/knob/baro/fo_inHg")
+    elseif(not inhg_active and hpa_active) then
+        command_once("laminar/A333/knob/baro/fo_hPa")
+    else
+        LogMsg("Can't read Winwing EFIS R inHg/hPa switch position");
+    end
+
+    --ADF/OFF/VOR 1 switch
+    --data_in[14], value 0x01 = vor1, 0x02 = off1, 0x04 = adf1
+    local vor1_active = isBitSet(data_in[14],0x01)
+    local off1_active = isBitSet(data_in[14],0x02)
+    local adf1_active = isBitSet(data_in[14],0x04)
+    if(vor1_active and not off1_active and not adf1_active) then
+        --VOR 1
+        command_once("sim/instruments/EFIS_1_copilot_sel_vor")
+    elseif(not vor1_active and off1_active and not adf1_active) then
+        --OFF 1
+        command_once("sim/instruments/EFIS_1_copilot_sel_off")
+    elseif(not vor1_active and not off1_active and adf1_active) then
+        --ADF 1
+        command_once("sim/instruments/EFIS_1_copilot_sel_adf")
+    else
+        LogMsg("Can't read Winwing EFIS R ADF/OFF/VOR 1 switch position");
+    end
+
+    --ADF/OFF/VOR 2 switch
+    --data_in[14], 0x08 = vor2, 0x10 = off2, 0x20 = adf2
+    local vor2_active = isBitSet(data_in[14],0x08)
+    local off2_active = isBitSet(data_in[14],0x10)
+    local adf2_active = isBitSet(data_in[14],0x20)
+    if(vor2_active and not off2_active and not adf2_active) then
+        --VOR 2
+        command_once("sim/instruments/EFIS_2_copilot_sel_vor")
+    elseif(not vor2_active and off2_active and not adf2_active) then
+        --OFF 2
+        command_once("sim/instruments/EFIS_2_copilot_sel_off")
+    elseif(not vor2_active and not off2_active and adf2_active) then
+        --ADF 2
+        command_once("sim/instruments/EFIS_2_copilot_sel_adf")
+    else
+        LogMsg("Can't read Winwing EFIS R ADF/OFF/VOR 2 switch position");
     end
 
 end
 
 
+--determines whether in a given byte a certain bit is set.
+--both the byte and the "bit" have to be specified as byte,
+--i.e. the third bit (from right to left) means bitValue = 0x08,
+--the first bit means bitValue = 0x01, etc.
+function isBitSet(byteValue, bitValue)
+
+    return (bit.band(byteValue,bitValue) > 0)
+
+end
+
+
 function lcd_init()
-    local fcu = hid_open(0x4098, 0xbb10)
-    hid_write(fcu, 0, 0xf0, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)
+    local winwing_hid_dev = hid_open(0x4098, winwing_device.product_id)
+    hid_write(winwing_hid_dev, 0, 0xf0, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)
     logMsg("init lcd")
-    hid_close(fcu)
+    hid_close(winwing_hid_dev)
 end
 
 --TODO: still working on it to load this button id begin from config automatic  button IDs might change across different machines
 --you can find the button id in X-Plane 12/Output/preferences/control profiles/{your device profile}.prf
-FCU_BUTTON_BEGIN = 800
+FCU_BUTTON_BEGIN = 1120--800
 local btn = {}
 btn["MACH"] = {id=0,dataref="sim/autopilot/knots_mach_toggle"}
 btn["LOC"] = {id=1,dataref="sim/autopilot/NAV"}
@@ -137,24 +271,22 @@ lcd_flags["ffpa2"] = {byte = 10, mask = 0x80, value = 0}
 lcd_flags["fpa_comma"] = {byte = 9, mask = 0x10, value = 0}
 lcd_flags["mach_comma"] = {byte = 12, mask = 0x01, value = 0}
 
-
-
-function config_led(fcu, led)
+function config_led(winwing_hid_dev, led)
     if (led.bind ~= "") then
         local val,_= loadstring("return "..led.bind)
         local flag = val()
         if (flag ~= led.val) then
             logMsg("set led "..led.id.." "..flag)
-            hid_write(fcu, 0, 0x02, 0x10, 0xbb, 0 , 0, 3, 0x49, led.id, flag, 0, 0, 0, 0, 0)
+            hid_write(winwing_hid_dev, 0, 0x02, 0x10, 0xbb, 0 , 0, 3, 0x49, led.id, flag, 0, 0, 0, 0, 0)
             led.val = flag
         end
     end
 end
 
 
-function set_led(fcu)
+function set_led(winwing_hid_dev)
     for i, led in pairs(led_list) do
-        config_led(fcu, led)
+        config_led(winwing_hid_dev, led)
     end
 end
 
@@ -265,7 +397,7 @@ function rjust(str, width, fillchar)
     return string.rep(fillchar, padding) .. str
 end
 
-function draw_lcd(fcu ,spd, hdg, alt, vs)
+function draw_lcd(winwing_hid_dev ,spd, hdg, alt, vs)
     local s = data_from_string(3, spd)
     local h = data_from_string(3, hdg, true)
     local a = data_from_string(5, alt, true)
@@ -281,7 +413,7 @@ function draw_lcd(fcu ,spd, hdg, alt, vs)
     end
 
     local pkg_nr = 1
-    hid_write(fcu, 0, 0xf0, 0x0, pkg_nr, 0x31, 0x10, 0xbb, 0x0, 0x0, 0x2, 0x1, 0x0, 0x0, 0xff, 0xff, 0x2, 0x0, 0x0, 0x20, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+    hid_write(winwing_hid_dev, 0, 0xf0, 0x0, pkg_nr, 0x31, 0x10, 0xbb, 0x0, 0x0, 0x2, 0x1, 0x0, 0x0, 0xff, 0xff, 0x2, 0x0, 0x0, 0x20, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
                 bit.bor(s[2],bl[12]), s[1],
                 s[0], bit.bor(h[3] , bl[1]),
                 h[2], h[1], bit.bor(h[0] , bl[0]),  bit.bor(a[5] , bl[7]),
@@ -291,7 +423,7 @@ function draw_lcd(fcu ,spd, hdg, alt, vs)
                 0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)
 
 
-    hid_write(fcu, 0, 0xf0, 0x0, pkg_nr, 0x11, 0x10, 0xbb, 0x0, 0x0, 0x3, 0x1, 0x0, 0x0, 0xff, 0xff, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)
+    hid_write(winwing_hid_dev, 0, 0xf0, 0x0, pkg_nr, 0x11, 0x10, 0xbb, 0x0, 0x0, 0x3, 0x1, 0x0, 0x0, 0xff, 0xff, 0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)
 end
 
 exped_led_state = 0
@@ -397,15 +529,14 @@ function refresh_dataref()
         set_button_assignment(FCU_BUTTON_BEGIN+btn["VS_INC"].id, "laminar/A333/autopilot/fpa_increase")
     end
     --hid_open
-    local fcu = hid_open(0x4098, 0xbb10)
-    draw_lcd(fcu, str_spd, str_hdg, str_alt, str_vs)
-    set_led(fcu)
-    hid_close(fcu)
+    local winwing_hid_dev = hid_open(0x4098, winwing_device.product_id)
+    draw_lcd(winwing_hid_dev, str_spd, str_hdg, str_alt, str_vs)
+    set_led(winwing_hid_dev)
+    hid_close(winwing_hid_dev)
    
 end
 
-init_fcu()
+init_winwing_device()
 
 
-do_every_frame("refresh_dataref()")
 
